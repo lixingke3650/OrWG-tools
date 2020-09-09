@@ -23,8 +23,8 @@ typedef enum {
 } wg_cmd_t;
 
 struct allowedip {
-	struct sockaddr a_addr;
-	struct sockaddr a_mask;
+	struct sockaddr_storage a_addr;
+	struct sockaddr_storage a_mask;
 };
 
 static void in_len2mask(struct in_addr *mask, unsigned int len)
@@ -132,26 +132,25 @@ static nvlist_t *pack_peer(struct wgpeer *peer)
 		nvlist_add_binary(nvl_peer, "pre-shared-key", peer->preshared_key, WG_KEY_LEN); /* TODO: preshared-key instead of pre-shared-key */
 	if (peer->flags & WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL)
 		nvlist_add_number(nvl_peer, "persistent-keepalive-interval", peer->persistent_keepalive_interval);
-	if ((peer->endpoint.addr.sa_family == AF_INET || peer->endpoint.addr.sa_family == AF_INET6) &
+	if ((peer->endpoint.addr.sa_family == AF_INET || peer->endpoint.addr.sa_family == AF_INET6) &&
 	    peer->endpoint.addr.sa_len <= sizeof(struct sockaddr))
 		nvlist_add_binary(nvl_peer, "endpoint", &peer->endpoint.addr, sizeof(struct sockaddr));
 	nvlist_add_bool(nvl_peer, "replace-allowedips", !!(peer->flags & WGPEER_REPLACE_ALLOWEDIPS));
 	nvlist_add_bool(nvl_peer, "peer-remove", !!(peer->flags & WGPEER_REMOVE_ME));
 	for_each_wgallowedip(peer, aip) {
-		void *data = &paips->a_mask.sa_data;
 		void *addr;
 
-		paips->a_addr.sa_family = aip->family;
+		paips->a_addr.ss_family = aip->family;
 		if (aip->family == AF_INET) {
-			in_len2mask((struct in_addr *)data, aip->cidr);
+			in_len2mask((struct in_addr *)&((struct sockaddr *)&paips->a_mask)->sa_data, aip->cidr);
 			addr = &satosin(&paips->a_addr)->sin_addr;
 			memcpy(addr, &aip->ip4, sizeof(aip->ip4));
-			paips->a_addr.sa_len = sizeof(struct sockaddr_in);
+			paips->a_addr.ss_len = sizeof(struct sockaddr_in);
 		} else if (aip->family == AF_INET6) {
-			in6_prefixlen2mask((struct in6_addr *)data, aip->cidr);
+			in6_prefixlen2mask((struct in6_addr *)&((struct sockaddr *)&paips->a_mask)->sa_data, aip->cidr);
 			addr = &satosin6(&paips->a_addr)->sin6_addr;
 			memcpy(addr, &aip->ip6, sizeof(aip->ip6));
-			paips->a_addr.sa_len = sizeof(struct sockaddr_in6);
+			paips->a_addr.ss_len = sizeof(struct sockaddr_in6);
 
 		}
 		paips++;
@@ -222,8 +221,9 @@ static struct wgpeer *unpack_peer(const nvlist_t *nvl_peer)
 		peer->last_allowedip = aip;
 
 		sa = __DECONST(void *, &aips->a_addr);
-		bitmask = __DECONST(void *, &aips->a_mask.sa_data);
-		aip->family = family = aips->a_addr.sa_family;
+		bitmask = __DECONST(void *,
+		    ((const struct sockaddr *)&aips->a_mask)->sa_data);
+		aip->family = family = aips->a_addr.ss_family;
 
 		if (family == AF_INET) {
 			aip->cidr = in_mask2len(bitmask);
@@ -422,5 +422,8 @@ static int kernel_set_device(struct wgdevice *dev)
 out:
 	/* TODO: does nvl_array or peer or anything else leak? does this function leak? */
 	free(packed);
+	nvlist_destroy(nvl);
+	if (peer_count)
+		free(nvl_array);
 	return rc;
 }
