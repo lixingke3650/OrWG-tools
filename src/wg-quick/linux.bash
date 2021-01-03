@@ -95,6 +95,14 @@ add_if() {
 	fi
 }
 
+add_if_kernel() {
+	cmd ip link add "$INTERFACE" type wireguard || die "Missing WireGuard kernel module."
+}
+
+add_if_go() {
+	cmd wireguard-go "$INTERFACE" || die "Missing wireguard-go."
+}
+
 del_if() {
 	local table
 	[[ $HAVE_SET_DNS -eq 0 ]] || unset_dns
@@ -298,7 +306,7 @@ execute_hooks() {
 
 cmd_usage() {
 	cat >&2 <<-_EOF
-	Usage: $PROGRAM [ up | down | save | strip ] [ CONFIG_FILE | INTERFACE ]
+	Usage: $PROGRAM [ up | down | save | strip ] [ CONFIG_FILE | INTERFACE ] [kernel | go]
 
 	  CONFIG_FILE is a configuration file, whose filename is the interface name
 	  followed by \`.conf'. Otherwise, INTERFACE is an interface name, with
@@ -328,7 +336,13 @@ cmd_up() {
 	[[ -z $(ip link show dev "$INTERFACE" 2>/dev/null) ]] || die "\`$INTERFACE' already exists"
 	trap 'del_if; exit' INT TERM EXIT
 	execute_hooks "${PRE_UP[@]}"
-	add_if
+	if [[ $1 == kernel ]]; then
+		add_if_kernel
+	elif [[ $1 == go ]]; then
+		add_if_go
+	else
+		die "Can't find interface type: $1"
+	fi
 	set_config
 	for i in "${ADDRESSES[@]}"; do
 		add_addr "$i"
@@ -365,19 +379,19 @@ cmd_strip() {
 
 if [[ $# -eq 1 && ( $1 == --help || $1 == -h || $1 == help ) ]]; then
 	cmd_usage
-elif [[ $# -eq 2 && $1 == up ]]; then
+elif [[ $# -eq 3 && $1 == up ]]; then
 	auto_su
 	parse_options "$2"
-	cmd_up
-elif [[ $# -eq 2 && $1 == down ]]; then
+	cmd_up "$3"
+elif [[ $# -eq 3 && $1 == down ]]; then
 	auto_su
 	parse_options "$2"
 	cmd_down
-elif [[ $# -eq 2 && $1 == save ]]; then
+elif [[ $# -eq 3 && $1 == save ]]; then
 	auto_su
 	parse_options "$2"
 	cmd_save
-elif [[ $# -eq 2 && $1 == strip ]]; then
+elif [[ $# -eq 3 && $1 == strip ]]; then
 	auto_su
 	parse_options "$2"
 	cmd_strip
